@@ -2,13 +2,6 @@ import { Button } from "./ui/button";
 import UsernameMenu from "./UsernameMenu";
 import { Link } from "react-router-dom";
 import useAppContext from "../hooks/useAppContext";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
-import { ChevronDown, FileText, Activity } from "lucide-react";
 import { getHotelsSearchUrl } from "../lib/nav-utils";
 
 const NAV_AUTH_WIDTH = "min-w-[120px]";
@@ -33,37 +26,6 @@ const MainNav = () => {
       <Link to="/my-hotels" className={navLinkClass}>
         My Hotels
       </Link>
-
-      {/* <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            className={`${navLinkClass} flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-white/50 focus:ring-offset-2 focus:ring-offset-primary-600 rounded-lg`}
-          >
-            API
-            <ChevronDown className="h-4 w-4" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-48 bg-white">
-          <DropdownMenuItem asChild>
-            <Link
-              to="/api-docs"
-              className="flex items-center gap-2 cursor-pointer text-gray-900"
-            >
-              <FileText className="h-4 w-4" />
-              API Docs
-            </Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <Link
-              to="/api-status"
-              className="flex items-center gap-2 cursor-pointer text-gray-900"
-            >
-              <Activity className="h-4 w-4" />
-              API Status
-            </Link>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu> */}
 
       <div className={`flex items-center justify-end ${NAV_AUTH_WIDTH}`}>
         {isLoggedIn ? (
