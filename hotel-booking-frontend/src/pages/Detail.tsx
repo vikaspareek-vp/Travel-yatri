@@ -87,7 +87,7 @@ const Detail = () => {
             )}
             {hotel.totalRevenue && hotel.totalRevenue > 0 && (
               <Badge variant="outline">
-                £{hotel.totalRevenue.toLocaleString()} revenue
+                ₹{hotel.totalRevenue.toLocaleString()} revenue
               </Badge>
             )}
             {/* Rating Badge - Always show with appropriate message */}
@@ -135,7 +135,7 @@ const Detail = () => {
           <div className="flex items-center gap-6">
             <div className="text-center">
               <p className="text-2xl font-bold text-gray-900">
-                £{hotel.pricePerNight}
+                ₹{hotel.pricePerNight}
               </p>
               <p className="text-sm text-gray-600">per night</p>
             </div>

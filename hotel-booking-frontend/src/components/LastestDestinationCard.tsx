@@ -37,7 +37,7 @@ const LatestDestinationCard = ({ hotel }: Props) => {
         {/* Price Badge */}
         <div className="absolute top-4 left-4">
           <div className="bg-primary-600 text-white rounded-full px-3 py-1">
-            <span className="text-sm font-bold">£{hotel.pricePerNight}</span>
+            <span className="text-sm font-bold">₹{hotel.pricePerNight}</span>
           </div>
         </div>
       </div>
