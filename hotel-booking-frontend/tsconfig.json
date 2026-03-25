@@ -23,3 +23,9 @@
   "include": ["src"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
+{
+  "compilerOptions": {
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  }
+}
