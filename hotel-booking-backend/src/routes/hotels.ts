@@ -82,6 +82,7 @@ router.post(
   verifyToken,
   async (req: Request, res: Response) => {
     try {
+      // 🔹 Verify payment
       const paymentIntent = await stripe.paymentIntents.retrieve(
         req.body.paymentIntentId
       );
@@ -90,7 +91,7 @@ router.post(
         return res.status(400).json({ message: "Payment failed" });
       }
 
-      // CREATE BOOKING OBJECT
+      // 🔹 Create booking
       const newBooking: BookingType = {
         ...req.body,
         userId: req.userId,
@@ -100,34 +101,11 @@ router.post(
         paymentStatus: "paid",
       };
 
-      // SAVE BOOKING
       const booking = new Booking(newBooking);
       await booking.save();
       console.log("✅ Booking saved");
 
-      // GET USER + HOTEL
-      const user = await User.findById(req.userId);
-      const hotel = await Hotel.findById(req.params.hotelId);
-
-      console.log("👤 User:", user?.email);
-      console.log("🏨 Hotel:", hotel?.name);
-
-      // ================= EMAIL =================
-      if (hotel && user?.email) {
-        console.log("🔥 EMAIL FUNCTION CALLED");
-        console.log("📧 Sending to:", user.email);
-
-        try {
-          await sendBookingEmail(user.email, newBooking, hotel);
-          console.log("✅ Email sent successfully");
-        } catch (err) {
-          console.log("❌ Email failed:", err);
-        }
-      } else {
-        console.log("⚠️ Email not sent - missing user or hotel");
-      }
-
-      // ================= ANALYTICS =================
+      // 🔹 Update analytics (non-blocking safe)
       await Hotel.findByIdAndUpdate(req.params.hotelId, {
         $inc: { totalBookings: 1 },
       });
@@ -136,10 +114,29 @@ router.post(
         $inc: { totalBookings: 1 },
       });
 
+      // 🔥 SEND RESPONSE FIRST (IMPORTANT FIX)
       res.status(200).json({
         success: true,
         message: "Booking successful",
       });
+
+      // ================= EMAIL (BACKGROUND TASK) =================
+      try {
+        const user = await User.findById(req.userId);
+        const hotel = await Hotel.findById(req.params.hotelId);
+
+        if (hotel && user?.email) {
+          console.log("📧 Sending email to:", user.email);
+
+          // 🔥 NON-BLOCKING (NO AWAIT)
+          sendBookingEmail(user.email, newBooking, hotel)
+            .then(() => console.log("✅ Email sent"))
+            .catch((err) => console.log("❌ Email error:", err));
+        }
+      } catch (err) {
+        console.log("❌ Email background error:", err);
+      }
+
     } catch (error) {
       console.log("❌ Booking Error:", error);
       res.status(500).json({ message: "Booking failed" });
