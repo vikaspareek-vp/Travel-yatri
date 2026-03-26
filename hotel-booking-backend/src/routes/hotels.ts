@@ -2,249 +2,163 @@ import express, { Request, Response } from "express";
 import Hotel from "../models/hotel";
 import Booking from "../models/booking";
 import User from "../models/user";
-import { BookingType, HotelSearchResponse } from "../../../shared/types";
-import { param, validationResult } from "express-validator";
+import { BookingType } from "../../../shared/types";
 import Stripe from "stripe";
 import verifyToken from "../middleware/auth";
+import { sendBookingEmail } from "../utils/sendEmail";
 
 const stripe = new Stripe(process.env.STRIPE_API_KEY as string);
-
 const router = express.Router();
 
+// ================= SEARCH =================
 router.get("/search", async (req: Request, res: Response) => {
   try {
     const query = constructSearchQuery(req.query);
 
-    let sortOptions = {};
-    switch (req.query.sortOption) {
-      case "starRating":
-        sortOptions = { starRating: -1 };
-        break;
-      case "pricePerNightAsc":
-        sortOptions = { pricePerNight: 1 };
-        break;
-      case "pricePerNightDesc":
-        sortOptions = { pricePerNight: -1 };
-        break;
-    }
-
-    const pageSize = 5;
-    const pageNumber = parseInt(
-      req.query.page ? req.query.page.toString() : "1"
-    );
-    const skip = (pageNumber - 1) * pageSize;
-
-    const hotels = await Hotel.find(query)
-      .sort(sortOptions)
-      .skip(skip)
-      .limit(pageSize);
-
+    const hotels = await Hotel.find(query);
     const total = await Hotel.countDocuments(query);
 
-    const response: HotelSearchResponse = {
+    res.json({
       data: hotels,
       pagination: {
         total,
-        page: pageNumber,
-        pages: Math.ceil(total / pageSize),
+        page: 1,
+        pages: 1,
       },
-    };
-
-    res.json(response);
+    });
   } catch (error) {
-    console.log("error", error);
-    res.status(500).json({ message: "Something went wrong" });
+    console.log("❌ Search Error:", error);
+    res.status(500).json({ message: "Error" });
   }
 });
 
-router.get("/", async (req: Request, res: Response) => {
-  try {
-    const hotels = await Hotel.find().sort("-lastUpdated");
-    res.json(hotels);
-  } catch (error) {
-    console.log("error", error);
-    res.status(500).json({ message: "Error fetching hotels" });
-  }
+// ================= GET ALL =================
+router.get("/", async (_req: Request, res: Response) => {
+  const hotels = await Hotel.find().sort("-lastUpdated");
+  res.json(hotels);
 });
 
-router.get(
-  "/:id",
-  [param("id").notEmpty().withMessage("Hotel ID is required")],
-  async (req: Request, res: Response) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
+// ================= GET ONE =================
+router.get("/:id", async (req: Request, res: Response) => {
+  const hotel = await Hotel.findById(req.params.id);
+  res.json(hotel);
+});
 
-    const id = req.params.id.toString();
-
-    try {
-      const hotel = await Hotel.findById(id);
-      res.json(hotel);
-    } catch (error) {
-      console.log(error);
-      res.status(500).json({ message: "Error fetching hotel" });
-    }
-  }
-);
-
+// ================= PAYMENT =================
 router.post(
   "/:hotelId/bookings/payment-intent",
   verifyToken,
   async (req: Request, res: Response) => {
-    const { numberOfNights } = req.body;
-    const hotelId = req.params.hotelId;
+    try {
+      const hotel = await Hotel.findById(req.params.hotelId);
+      if (!hotel) return res.status(400).json({ message: "Hotel not found" });
 
-    const hotel = await Hotel.findById(hotelId);
-    if (!hotel) {
-      return res.status(400).json({ message: "Hotel not found" });
+      const totalCost = hotel.pricePerNight * req.body.numberOfNights;
+
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: totalCost * 100,
+        currency: "gbp",
+        metadata: {
+          hotelId: req.params.hotelId,
+          userId: req.userId,
+        },
+      });
+
+      res.send({
+        paymentIntentId: paymentIntent.id,
+        clientSecret: paymentIntent.client_secret,
+        totalCost,
+      });
+    } catch (error) {
+      console.log("❌ Payment Error:", error);
+      res.status(500).json({ message: "Payment Error" });
     }
-
-    const totalCost = hotel.pricePerNight * numberOfNights;
-
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: totalCost * 100,
-      currency: "gbp",
-      metadata: {
-        hotelId,
-        userId: req.userId,
-      },
-    });
-
-    if (!paymentIntent.client_secret) {
-      return res.status(500).json({ message: "Error creating payment intent" });
-    }
-
-    const response = {
-      paymentIntentId: paymentIntent.id,
-      clientSecret: paymentIntent.client_secret.toString(),
-      totalCost,
-    };
-
-    res.send(response);
   }
 );
 
+// ================= BOOKING + EMAIL =================
 router.post(
   "/:hotelId/bookings",
   verifyToken,
   async (req: Request, res: Response) => {
     try {
-      const paymentIntentId = req.body.paymentIntentId;
-
       const paymentIntent = await stripe.paymentIntents.retrieve(
-        paymentIntentId as string
+        req.body.paymentIntentId
       );
 
-      if (!paymentIntent) {
-        return res.status(400).json({ message: "payment intent not found" });
-      }
-
-      if (
-        paymentIntent.metadata.hotelId !== req.params.hotelId ||
-        paymentIntent.metadata.userId !== req.userId
-      ) {
-        return res.status(400).json({ message: "payment intent mismatch" });
-      }
-
       if (paymentIntent.status !== "succeeded") {
-        return res.status(400).json({
-          message: `payment intent not succeeded. Status: ${paymentIntent.status}`,
-        });
+        return res.status(400).json({ message: "Payment failed" });
       }
 
+      // CREATE BOOKING OBJECT
       const newBooking: BookingType = {
         ...req.body,
         userId: req.userId,
         hotelId: req.params.hotelId,
-        createdAt: new Date(), // Add booking creation timestamp
-        status: "confirmed", // Set initial status
-        paymentStatus: "paid", // Set payment status since payment succeeded
+        createdAt: new Date(),
+        status: "confirmed",
+        paymentStatus: "paid",
       };
 
-      // Create booking in separate collection
+      // SAVE BOOKING
       const booking = new Booking(newBooking);
       await booking.save();
+      console.log("✅ Booking saved");
 
-      // Update hotel analytics
+      // GET USER + HOTEL
+      const user = await User.findById(req.userId);
+      const hotel = await Hotel.findById(req.params.hotelId);
+
+      console.log("👤 User:", user?.email);
+      console.log("🏨 Hotel:", hotel?.name);
+
+      // ================= EMAIL =================
+      if (hotel && user?.email) {
+        console.log("🔥 EMAIL FUNCTION CALLED");
+        console.log("📧 Sending to:", user.email);
+
+        try {
+          await sendBookingEmail(user.email, newBooking, hotel);
+          console.log("✅ Email sent successfully");
+        } catch (err) {
+          console.log("❌ Email failed:", err);
+        }
+      } else {
+        console.log("⚠️ Email not sent - missing user or hotel");
+      }
+
+      // ================= ANALYTICS =================
       await Hotel.findByIdAndUpdate(req.params.hotelId, {
-        $inc: {
-          totalBookings: 1,
-          totalRevenue: newBooking.totalCost,
-        },
+        $inc: { totalBookings: 1 },
       });
 
-      // Update user analytics
       await User.findByIdAndUpdate(req.userId, {
-        $inc: {
-          totalBookings: 1,
-          totalSpent: newBooking.totalCost,
-        },
+        $inc: { totalBookings: 1 },
       });
 
-      res.status(200).send();
+      res.status(200).json({
+        success: true,
+        message: "Booking successful",
+      });
     } catch (error) {
-      console.log(error);
-      res.status(500).json({ message: "something went wrong" });
+      console.log("❌ Booking Error:", error);
+      res.status(500).json({ message: "Booking failed" });
     }
   }
 );
 
+// ================= QUERY BUILDER =================
 const constructSearchQuery = (queryParams: any) => {
-  let constructedQuery: any = {};
+  let query: any = {};
 
-  if (queryParams.destination && queryParams.destination.trim() !== "") {
-    const destination = queryParams.destination.trim();
-
-    constructedQuery.$or = [
-      { city: { $regex: destination, $options: "i" } },
-      { country: { $regex: destination, $options: "i" } },
+  if (queryParams.destination) {
+    query.$or = [
+      { city: { $regex: queryParams.destination, $options: "i" } },
+      { country: { $regex: queryParams.destination, $options: "i" } },
     ];
   }
 
-  if (queryParams.adultCount) {
-    constructedQuery.adultCount = {
-      $gte: parseInt(queryParams.adultCount),
-    };
-  }
-
-  if (queryParams.childCount) {
-    constructedQuery.childCount = {
-      $gte: parseInt(queryParams.childCount),
-    };
-  }
-
-  if (queryParams.facilities) {
-    constructedQuery.facilities = {
-      $all: Array.isArray(queryParams.facilities)
-        ? queryParams.facilities
-        : [queryParams.facilities],
-    };
-  }
-
-  if (queryParams.types) {
-    constructedQuery.type = {
-      $in: Array.isArray(queryParams.types)
-        ? queryParams.types
-        : [queryParams.types],
-    };
-  }
-
-  if (queryParams.stars) {
-    const starRatings = Array.isArray(queryParams.stars)
-      ? queryParams.stars.map((star: string) => parseInt(star))
-      : parseInt(queryParams.stars);
-
-    constructedQuery.starRating = { $in: starRatings };
-  }
-
-  if (queryParams.maxPrice) {
-    constructedQuery.pricePerNight = {
-      $lte: parseInt(queryParams.maxPrice).toString(),
-    };
-  }
-
-  return constructedQuery;
+  return query;
 };
 
 export default router;

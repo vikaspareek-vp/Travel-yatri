@@ -20,6 +20,10 @@ import morgan from "morgan";
 import compression from "compression";
 import rateLimit from "express-rate-limit";
 
+import "dotenv/config";
+
+console.log("RESEND:", process.env.RESEND_API_KEY); //
+
 // Environment Variables Validation
 const requiredEnvVars = [
   "MONGODB_CONNECTION_STRING",
@@ -28,6 +32,7 @@ const requiredEnvVars = [
   "CLOUDINARY_API_KEY",
   "CLOUDINARY_API_SECRET",
   "STRIPE_API_KEY",
+  
 ];
 
 const missingEnvVars = requiredEnvVars.filter((envVar) => !process.env[envVar]);
